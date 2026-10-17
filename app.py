@@ -10,18 +10,15 @@ st.set_page_config(
     page_title="CineMatch | Movie Recommender",
     page_icon="🎬",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
-import pickle
-from pathlib import Path
 
+# ---------------- ROOT DIRECTORY ----------------
 BASE_DIR = Path(__file__).resolve().parent
 
-with open(BASE_DIR / "movie_list.pkl", "rb") as f:
-    movies = pickle.load(f)
+MOVIE_PATH = BASE_DIR / "movie_list.pkl"
+SIMILARITY_PATH = BASE_DIR / "similarity.pkl"
 
-with open(BASE_DIR / "similarity.pkl", "rb") as f:
-    similarity = pickle.load(f)
 # ---------------- CUSTOM CSS ----------------
 st.markdown("""
 <style>
@@ -93,7 +90,7 @@ header[data-testid="stHeader"] {
     border: 1px solid #292932;
     border-radius: 16px;
     padding: 10px;
-    height: 100%;
+    min-height: 100%;
     transition: border-color 0.2s ease;
 }
 
@@ -108,6 +105,7 @@ header[data-testid="stHeader"] {
     font-weight: 600;
     line-height: 1.4;
     padding: 12px 3px 5px;
+    overflow-wrap: anywhere;
 }
 
 .rank {
@@ -115,7 +113,7 @@ header[data-testid="stHeader"] {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1.5px;
-    padding: 5px 3px 0;
+    padding: 5px 3px 10px;
 }
 
 div.stButton > button {
@@ -168,26 +166,33 @@ div[data-testid="stAlert"] {
 """, unsafe_allow_html=True)
 
 
-# ---------------- LOAD DATA ----------------
+# ---------------- LOAD DATA FROM ROOT ----------------
 @st.cache_resource
 def load_models():
-    if not movie_path.exists():
+    missing_files = []
+
+    if not MOVIE_PATH.is_file():
+        missing_files.append(str(MOVIE_PATH))
+
+    if not SIMILARITY_PATH.is_file():
+        missing_files.append(str(SIMILARITY_PATH))
+
+    if missing_files:
         raise FileNotFoundError(
-            f"Movie data file not found. Checked: {BASE_DIR / 'movie_list.pkl'} "
-            f"and {MODEL_DIR / 'movie_list.pkl'}"
+            "Required files were not found:\n" + "\n".join(missing_files)
         )
 
-    if not similarity_path.exists():
-        raise FileNotFoundError(
-            f"Similarity file not found. Checked: {BASE_DIR / 'similarity.pkl'} "
-            f"and {MODEL_DIR / 'similarity.pkl'}"
-        )
-
-    with movie_path.open("rb") as file:
+    with MOVIE_PATH.open("rb") as file:
         movie_data = pickle.load(file)
 
-    with similarity_path.open("rb") as file:
+    with SIMILARITY_PATH.open("rb") as file:
         similarity_data = pickle.load(file)
+
+    if len(movie_data) != len(similarity_data):
+        raise ValueError(
+            "The movie list and similarity matrix have different sizes. "
+            "Make sure both files belong to the same trained model."
+        )
 
     return movie_data, similarity_data
 
@@ -200,15 +205,14 @@ except Exception as error:
     st.stop()
 
 
-# ---------------- TMDB POSTERS ----------------
-# Add TMDB_API_KEY to Streamlit Cloud Secrets.
-# Missing API keys or unavailable posters won't stop recommendations.
+# ---------------- TMDB API KEY ----------------
 try:
     TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "")
 except Exception:
     TMDB_API_KEY = ""
 
 
+# ---------------- FETCH MOVIE POSTER ----------------
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_poster(movie_id):
     if not TMDB_API_KEY:
@@ -221,25 +225,28 @@ def fetch_poster(movie_id):
             url,
             params={
                 "api_key": TMDB_API_KEY,
-                "language": "en-US"
+                "language": "en-US",
             },
-            timeout=8
+            timeout=8,
         )
         response.raise_for_status()
+
         poster_path = response.json().get("poster_path")
 
         if poster_path:
             return f"https://image.tmdb.org/t/p/w500{poster_path}"
 
     except (requests.RequestException, ValueError):
-        pass
+        return None
 
     return None
 
 
-# ---------------- RECOMMENDATIONS ----------------
+# ---------------- RECOMMEND MOVIES ----------------
 def recommend(movie_title, number=5):
-    matches = movies.index[movies["title"] == movie_title].tolist()
+    matches = movies.index[
+        movies["title"].astype(str) == movie_title
+    ].tolist()
 
     if not matches:
         return []
@@ -249,7 +256,7 @@ def recommend(movie_title, number=5):
     distances = sorted(
         enumerate(similarity[index]),
         key=lambda item: item[1],
-        reverse=True
+        reverse=True,
     )
 
     results = []
@@ -261,12 +268,12 @@ def recommend(movie_title, number=5):
         row = movies.iloc[movie_index]
 
         results.append({
-            "title": row["title"],
+            "title": str(row["title"]),
             "movie_id": row["movie_id"],
-            "score": float(score)
+            "score": float(score),
         })
 
-        if len(results) == number:
+        if len(results) >= number:
             break
 
     return results
@@ -289,11 +296,12 @@ st.markdown("""
 # ---------------- SEARCH SECTION ----------------
 st.markdown(
     '<div class="section-title">🎬 Discover movies</div>',
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
+
 st.markdown(
     '<div class="muted">Search the collection and choose a movie to get started.</div>',
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 movie_list = movies["title"].dropna().astype(str).tolist()
@@ -305,7 +313,6 @@ if not movie_list:
 selected_movie = st.selectbox(
     "Choose your movie",
     movie_list,
-    index=0
 )
 
 left, right = st.columns([1, 3])
@@ -313,18 +320,18 @@ left, right = st.columns([1, 3])
 with left:
     show_recommendations = st.button(
         "✦  Find Similar Movies",
-        use_container_width=True
+        use_container_width=True,
     )
 
 with right:
     st.markdown(
         '<div class="muted" style="padding-top:14px;">'
         'Personalized picks based on movie similarity</div>',
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 
-# ---------------- RESULTS ----------------
+# ---------------- DISPLAY RESULTS ----------------
 if show_recommendations:
     recommendations = recommend(selected_movie)
 
@@ -337,53 +344,53 @@ if show_recommendations:
     st.markdown(
         f'<div class="section-title">Because you selected '
         f'<span style="color:#ff647c">{selected_movie}</span></div>',
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
+
     st.markdown(
         '<div class="muted">Your next five movies to explore.</div>',
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     with st.spinner("Finding movies and loading posters..."):
-        for start in range(0, len(recommendations), 5):
-            batch = recommendations[start:start + 5]
-            columns = st.columns(5, gap="medium")
+        columns = st.columns(5, gap="medium")
 
-            for position, (column, movie) in enumerate(
-                zip(columns, batch), start=start + 1
-            ):
-                with column:
-                    poster = fetch_poster(movie["movie_id"])
+        for position, (column, movie) in enumerate(
+            zip(columns, recommendations),
+            start=1,
+        ):
+            with column:
+                poster = fetch_poster(movie["movie_id"])
 
+                st.markdown(
+                    f'<div class="poster-card">'
+                    f'<div class="rank">PICK {position:02d}</div>',
+                    unsafe_allow_html=True,
+                )
+
+                if poster:
+                    st.image(poster, use_container_width=True)
+                else:
                     st.markdown(
-                        f'<div class="poster-card">'
-                        f'<div class="rank">PICK {position:02d}</div>',
-                        unsafe_allow_html=True
+                        '<div style="height:240px;display:flex;'
+                        'align-items:center;justify-content:center;'
+                        'background:#24242d;border-radius:10px;'
+                        'color:#aaa;font-size:40px;">🎞️</div>',
+                        unsafe_allow_html=True,
                     )
 
-                    if poster:
-                        st.image(poster, use_container_width=True)
-                    else:
-                        st.markdown(
-                            '<div style="height:240px;display:flex;'
-                            'align-items:center;justify-content:center;'
-                            'background:#24242d;border-radius:10px;'
-                            'color:#aaa;font-size:40px;">🎞️</div>',
-                            unsafe_allow_html=True
-                        )
-
-                    st.markdown(
-                        f'<div class="movie-title">'
-                        f'{movie["title"]}</div></div>',
-                        unsafe_allow_html=True
-                    )
+                st.markdown(
+                    f'<div class="movie-title">'
+                    f'{movie["title"]}</div></div>',
+                    unsafe_allow_html=True,
+                )
 
     st.success("Your recommendations are ready!")
 
     if not TMDB_API_KEY:
         st.caption(
-            "Posters are optional. Add your TMDB API key to Streamlit "
-            "Secrets to display movie posters."
+            "Movie recommendations work without an API key. "
+            "To display posters, add TMDB_API_KEY in Streamlit Cloud Secrets."
         )
 
 
