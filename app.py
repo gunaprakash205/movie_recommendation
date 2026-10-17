@@ -12,21 +12,16 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+import pickle
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_DIR = BASE_DIR / "model"
 
-# Supports your current root-level files and a model/ folder
-movie_path = MODEL_DIR / "movie_list.pkl"
-similarity_path = MODEL_DIR / "similarity.pkl"
+with open(BASE_DIR / "movie_list.pkl", "rb") as f:
+    movies = pickle.load(f)
 
-if not movie_path.exists():
-    movie_path = BASE_DIR / "movie_list.pkl"
-
-if not similarity_path.exists():
-    similarity_path = BASE_DIR / "similarity.pkl"
-
-
+with open(BASE_DIR / "similarity.pkl", "rb") as f:
+    similarity = pickle.load(f)
 # ---------------- CUSTOM CSS ----------------
 st.markdown("""
 <style>
